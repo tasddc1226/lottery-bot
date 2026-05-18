@@ -60,6 +60,34 @@ def check_winning_win720(authCtrl: auth.AuthController) -> dict:
     item['balance'] = authCtrl.get_user_balance()
     return item
 
+def _parse_balance(balance_str) -> int:
+    if not isinstance(balance_str, str):
+        return -1
+    digits = ''.join(c for c in balance_str if c.isdigit())
+    if not digits:
+        return -1
+    return int(digits)
+
+
+def _maybe_send_balance_warning(balance_str, webhook_url: str) -> None:
+    threshold_raw = os.environ.get('BALANCE_THRESHOLD', '').strip()
+    if not threshold_raw:
+        return
+    try:
+        threshold = int(threshold_raw)
+    except ValueError:
+        print(f"[Warn] BALANCE_THRESHOLD is not a valid integer: {threshold_raw!r}")
+        return
+    if threshold <= 0:
+        return
+
+    balance = _parse_balance(balance_str)
+    if balance < 0:
+        return
+    if balance < threshold:
+        notification.Notification().send_balance_warning(balance_str, threshold, webhook_url)
+
+
 def send_message(mode: int, lottery_type: int, response: dict, webhook_url: str):
     notify = notification.Notification()
 
@@ -81,9 +109,11 @@ def check():
     send_message(0, 0, response=response, webhook_url=webhook_url)
 
     time.sleep(10)
-    
+
     response = check_winning_win720(auth_ctrl)
     send_message(0, 1, response=response, webhook_url=webhook_url)
+
+    _maybe_send_balance_warning(response.get('balance'), webhook_url)
 
 def buy(): 
     load_dotenv(override=True) 
@@ -100,17 +130,21 @@ def buy():
     auth_ctrl.http_client.session.cookies.clear()
     auth_ctrl, username, webhook_url = _setup_and_login()
 
-    response = buy_win720(auth_ctrl, username) 
+    response = buy_win720(auth_ctrl, username)
     send_message(1, 1, response=response, webhook_url=webhook_url)
+
+    _maybe_send_balance_warning(response.get('balance'), webhook_url)
 
 def lotto_buy():
     load_dotenv(override=True)
     count = int(os.environ.get('COUNT'))
     auth_ctrl, _, discord_webhook_url = _setup_and_login()
     mode = "AUTO"
-    
+
     response = buy_lotto645(auth_ctrl, count, mode)
     send_message(1, 0, response=response, webhook_url=discord_webhook_url)
+
+    _maybe_send_balance_warning(response.get('balance'), discord_webhook_url)
 
 def win720_buy():
     auth_ctrl, username, discord_webhook_url = _setup_and_login()
@@ -118,17 +152,23 @@ def win720_buy():
     response = buy_win720(auth_ctrl, username)
     send_message(1, 1, response=response, webhook_url=discord_webhook_url)
 
+    _maybe_send_balance_warning(response.get('balance'), discord_webhook_url)
+
 def lotto_check():
     auth_ctrl, _, discord_webhook_url = _setup_and_login()
 
     response = check_winning_lotto645(auth_ctrl)
     send_message(0, 0, response=response, webhook_url=discord_webhook_url)
 
+    _maybe_send_balance_warning(response.get('balance'), discord_webhook_url)
+
 def win720_check():
     auth_ctrl, _, discord_webhook_url = _setup_and_login()
 
     response = check_winning_win720(auth_ctrl)
     send_message(0, 1, response=response, webhook_url=discord_webhook_url)
+
+    _maybe_send_balance_warning(response.get('balance'), discord_webhook_url)
 
 def run():
     if len(sys.argv) < 2:
