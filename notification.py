@@ -136,10 +136,18 @@ class Notification:
             message = f"연금복권 - 다음 기회에... 🫠 (남은잔액 : {balance_str})"
             self._send_discord_webhook(webhook_url, message)
 
-    def _send_discord_webhook(self, webhook_url: str, message: str) -> None:        
+    def send_balance_warning(self, balance_str: str, threshold: int, webhook_url: str) -> None:
+        message = (
+            f"⚠️ 잔액 부족 경고\n"
+            f"현재 잔액: `{balance_str}` (임계값: `{threshold:,}원`)\n"
+            f"동행복권 사이트에서 예치금을 충전해 주세요."
+        )
+        self._send_discord_webhook(webhook_url, message)
+
+    def _send_discord_webhook(self, webhook_url: str, message: str) -> None:
         if not webhook_url:
             print(f"[Info] Webhook URL not found. Message: {message}")
             return
-        
+
         payload = { "content": message }
         requests.post(webhook_url, json=payload)
