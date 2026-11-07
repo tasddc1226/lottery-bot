@@ -6,7 +6,51 @@ import auth
 import lotto645
 import win720
 import notification
+from HttpClient import HttpClientSingleton
 import time
+import logging
+import traceback
+
+
+class _ErrorCounter(logging.Handler):
+    def __init__(self):
+        super().__init__(level=logging.ERROR)
+        self.count = 0
+
+    def emit(self, record):
+        self.count += 1
+
+
+logging.basicConfig(level=logging.WARNING, format="%(message)s")
+_error_counter = _ErrorCounter()
+logging.getLogger().addHandler(_error_counter)
+
+# 작업 단위 실패 목록. 하나라도 있으면 프로세스를 exit code 1로 종료한다.
+_failures = []
+
+
+def _run_step(name: str, fn):
+    """한 단계를 실행하고, 예외가 나면 기록만 하고 다음 단계로 넘어간다."""
+    before = _error_counter.count
+    try:
+        ok = fn()
+    except Exception as e:
+        traceback.print_exc()
+        print(f"[Error] {name} 실패: {e}")
+        _failures.append(name)
+        return
+    if ok is False or _error_counter.count > before:
+        print(f"[Error] {name} 실패 (결과 또는 로그 확인)")
+        _failures.append(name)
+
+
+def _lotto_buy_ok(response: dict) -> bool:
+    result = response.get("result", {}) if isinstance(response, dict) else {}
+    return str(result.get("resultMsg", "")).upper() == "SUCCESS"
+
+
+def _win720_buy_ok(response: dict) -> bool:
+    return isinstance(response, dict) and response.get("resultCode") == '100'
 
 
 def _setup_and_login():
@@ -104,71 +148,105 @@ def send_message(mode: int, lottery_type: int, response: dict, webhook_url: str)
 
 def check():
     auth_ctrl, _, webhook_url = _setup_and_login()
+    last = {}
 
-    response = check_winning_lotto645(auth_ctrl)
-    send_message(0, 0, response=response, webhook_url=webhook_url)
+    def _lotto():
+        response = check_winning_lotto645(auth_ctrl)
+        send_message(0, 0, response=response, webhook_url=webhook_url)
 
+    def _win720():
+        response = check_winning_win720(auth_ctrl)
+        send_message(0, 1, response=response, webhook_url=webhook_url)
+        last['balance'] = response.get('balance')
+
+    _run_step("로또 당첨 확인", _lotto)
     time.sleep(10)
+    _run_step("연금복권 당첨 확인", _win720)
 
-    response = check_winning_win720(auth_ctrl)
-    send_message(0, 1, response=response, webhook_url=webhook_url)
-
-    _maybe_send_balance_warning(response.get('balance'), webhook_url)
+    _maybe_send_balance_warning(last.get('balance'), webhook_url)
 
 def buy(): 
     load_dotenv(override=True) 
     count = int(os.environ.get('COUNT'))
     mode = "AUTO"
+    last = {}
 
-    auth_ctrl, username, webhook_url = _setup_and_login()
+    def _lotto():
+        auth_ctrl, _, webhook_url = _setup_and_login()
+        last['webhook_url'] = webhook_url
+        response = buy_lotto645(auth_ctrl, count, mode)
+        send_message(1, 0, response=response, webhook_url=webhook_url)
+        print(f"[Info] 로또 구매 결과: {response.get('result', {}).get('resultMsg')}")
+        return _lotto_buy_ok(response)
 
-    response = buy_lotto645(auth_ctrl, count, mode) 
-    send_message(1, 0, response=response, webhook_url=webhook_url)
+    def _win720():
+        HttpClientSingleton.get_instance().session.cookies.clear()
+        auth_ctrl, username, webhook_url = _setup_and_login()
+        last['webhook_url'] = webhook_url
+        response = buy_win720(auth_ctrl, username)
+        send_message(1, 1, response=response, webhook_url=webhook_url)
+        print(f"[Info] 연금복권 구매 결과: {response.get('resultCode')} {response.get('resultMsg')}")
+        last['balance'] = response.get('balance')
+        return _win720_buy_ok(response)
 
+    _run_step("로또 구매", _lotto)
     time.sleep(10)
+    _run_step("연금복권 구매", _win720)
 
-    auth_ctrl.http_client.session.cookies.clear()
-    auth_ctrl, username, webhook_url = _setup_and_login()
-
-    response = buy_win720(auth_ctrl, username)
-    send_message(1, 1, response=response, webhook_url=webhook_url)
-
-    _maybe_send_balance_warning(response.get('balance'), webhook_url)
+    _maybe_send_balance_warning(last.get('balance'), last.get('webhook_url'))
 
 def lotto_buy():
     load_dotenv(override=True)
     count = int(os.environ.get('COUNT'))
     auth_ctrl, _, discord_webhook_url = _setup_and_login()
     mode = "AUTO"
+    last = {}
 
-    response = buy_lotto645(auth_ctrl, count, mode)
-    send_message(1, 0, response=response, webhook_url=discord_webhook_url)
+    def _lotto():
+        response = buy_lotto645(auth_ctrl, count, mode)
+        send_message(1, 0, response=response, webhook_url=discord_webhook_url)
+        last['balance'] = response.get('balance')
+        return _lotto_buy_ok(response)
 
-    _maybe_send_balance_warning(response.get('balance'), discord_webhook_url)
+    _run_step("로또 구매", _lotto)
+    _maybe_send_balance_warning(last.get('balance'), discord_webhook_url)
 
 def win720_buy():
     auth_ctrl, username, discord_webhook_url = _setup_and_login()
+    last = {}
 
-    response = buy_win720(auth_ctrl, username)
-    send_message(1, 1, response=response, webhook_url=discord_webhook_url)
+    def _win720():
+        response = buy_win720(auth_ctrl, username)
+        send_message(1, 1, response=response, webhook_url=discord_webhook_url)
+        last['balance'] = response.get('balance')
+        return _win720_buy_ok(response)
 
-    _maybe_send_balance_warning(response.get('balance'), discord_webhook_url)
+    _run_step("연금복권 구매", _win720)
+    _maybe_send_balance_warning(last.get('balance'), discord_webhook_url)
 
 def lotto_check():
     auth_ctrl, _, discord_webhook_url = _setup_and_login()
+    last = {}
 
-    response = check_winning_lotto645(auth_ctrl)
-    send_message(0, 0, response=response, webhook_url=discord_webhook_url)
+    def _lotto():
+        response = check_winning_lotto645(auth_ctrl)
+        send_message(0, 0, response=response, webhook_url=discord_webhook_url)
+        last['balance'] = response.get('balance')
 
-    _maybe_send_balance_warning(response.get('balance'), discord_webhook_url)
+    _run_step("로또 당첨 확인", _lotto)
+    _maybe_send_balance_warning(last.get('balance'), discord_webhook_url)
 
 def win720_check():
     auth_ctrl, _, discord_webhook_url = _setup_and_login()
+    last = {}
 
-    response = check_winning_win720(auth_ctrl)
-    send_message(0, 1, response=response, webhook_url=discord_webhook_url)
+    def _win720():
+        response = check_winning_win720(auth_ctrl)
+        send_message(0, 1, response=response, webhook_url=discord_webhook_url)
+        last['balance'] = response.get('balance')
 
-    _maybe_send_balance_warning(response.get('balance'), discord_webhook_url)
+    _run_step("연금복권 당첨 확인", _win720)
+    _maybe_send_balance_warning(last.get('balance'), discord_webhook_url)
 
 def run():
     if len(sys.argv) < 2:
@@ -187,7 +265,13 @@ def run():
         lotto_check()
     elif sys.argv[1] == "check_win720":
         win720_check()
-  
+    else:
+        print(f"Unknown command: {sys.argv[1]}")
+        sys.exit(2)
+
+    if _failures:
+        print(f"[Error] 실패한 작업: {', '.join(_failures)}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     run()

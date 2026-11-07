@@ -5,9 +5,14 @@ import json
 import base64
 import binascii
 import time
+import re
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_v1_5
 from HttpClient import HttpClientSingleton
+
+class LoginError(Exception):
+    pass
+
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
@@ -147,6 +152,19 @@ class AuthController:
             data=data,
         )
         
+        # 로그인 실패 시에도 HTTP 200으로 errorMessage가 담긴 로그인 페이지가 돌아온다.
+        # 비밀번호 오류를 재시도하면 계정이 잠길 수 있으므로 재시도하지 않고 바로 실패 처리한다.
+        err_msg = re.search(r"const\s+errorMessage\s*=\s*'([^']*)'", res.text)
+        err_code = re.search(r"const\s+errorCode\s*=\s*'([^']*)'", res.text)
+        if err_msg and err_msg.group(1).strip():
+            code = err_code.group(1) if err_code else ""
+            raise LoginError(f"로그인 실패: {err_msg.group(1).strip()} (code={code})")
+
+        # 장기간 비밀번호 미변경 계정은 로그인 직후 비밀번호 변경 안내 페이지로 리다이렉트되며,
+        # "다음에 변경"을 누르기 전까지 세션이 인증되지 않는다(이후 API가 401).
+        if "/mbrsrvc/ExpryPswdNoti" in res.url:
+            self._defer_password_change()
+
         new_jsessionid = self._get_j_session_id_from_response(res)
         if new_jsessionid:
              self._update_auth_cred(new_jsessionid)
@@ -157,6 +175,43 @@ class AuthController:
              print(f"[Warning] Failed to check main page after login: {e}")
              
         return res
+
+    def _defer_password_change(self):
+        """비밀번호 변경 안내 페이지에서 '다음에 변경'을 누른 것과 동일한 요청을 보낸다."""
+        print("[Warning] 동행복권 비밀번호 변경 안내 페이지가 떴습니다. '다음에 변경'으로 넘어갑니다. 비밀번호 변경을 권장합니다.")
+        headers = copy.deepcopy(self._REQ_HEADERS)
+        headers.update({
+            "Content-Type": "application/json;charset=UTF-8",
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "X-Requested-With": "XMLHttpRequest",
+            "AJAX": "true",
+            "Referer": "https://www.dhlottery.co.kr/mbrsrvc/ExpryPswdNoti",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-Dest": "empty",
+        })
+        headers.pop("Upgrade-Insecure-Requests", None)
+        res = self.http_client.post(
+            "https://www.dhlottery.co.kr/mbrsrvc/nxtChngProc.do",
+            headers=headers,
+            data="{}",
+        )
+        try:
+            body = res.json()
+        except ValueError:
+            raise LoginError(f"비밀번호 변경 유예 응답 파싱 실패: {res.text[:200]}")
+        data = body.get("data", body) if isinstance(body, dict) else {}
+        try:
+            result_cnt = int((data or {}).get("resultCnt", 0))
+        except (TypeError, ValueError):
+            result_cnt = 0
+        if result_cnt <= 0:
+            raise LoginError(f"비밀번호 변경 유예 실패: {(data or {}).get('resultMsg') or res.text[:200]}")
+
+        self.http_client.get(
+            "https://www.dhlottery.co.kr/login/loginSuccess.do?returnUrl=/main",
+            headers=self._REQ_HEADERS,
+        )
 
     def _update_auth_cred(self, j_session_id: str) -> None:
         assert isinstance(j_session_id, str)
