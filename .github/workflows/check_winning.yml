@@ -26,7 +26,14 @@ jobs:
           fi
           echo "$VENV/bin" >> "$GITHUB_PATH"
 
+      - name: Diag (temporary)
+        run: python3 diag_login.py
+        env:
+          USERNAME: ${{ secrets.USERNAME }}
+          PASSWORD: ${{ secrets.PASSWORD }}
+
       - name: Run Scripts
+        if: false
         run: make check # or use 'make check_lotto' / 'make check_win720' for granular check
         env:
           USERNAME: ${{ secrets.USERNAME }}
