@@ -18,11 +18,11 @@ jobs:
           PY=$(command -v python3.9 || echo /opt/homebrew/bin/python3.9)
           HASH=$(shasum requirements.txt | cut -c1-12)
           VENV="$HOME/.cache/lottery-bot-venv-$HASH"
-          if [ ! -x "$VENV/bin/python" ]; then
-            rm -rf "$VENV.tmp"
-            "$PY" -m venv "$VENV.tmp"
-            "$VENV.tmp/bin/pip" install -q -r requirements.txt
-            mv "$VENV.tmp" "$VENV"
+          if [ ! -f "$VENV/.installed" ]; then
+            rm -rf "$VENV"
+            "$PY" -m venv "$VENV"
+            "$VENV/bin/pip" install -q -r requirements.txt
+            touch "$VENV/.installed"
           fi
           echo "$VENV/bin" >> "$GITHUB_PATH"
 
