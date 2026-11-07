@@ -6,16 +6,25 @@ on:
 
 jobs:
   build:
-    runs-on: [ubuntu-latest]
+    # 동행복권이 해외(GitHub 호스티드 러너) IP 접속을 차단/지연하므로 한국 IP의 self-hosted runner에서 실행
+    runs-on: [self-hosted, korea]
+    timeout-minutes: 20
     name: Buy lotto
     steps:  
 
       - uses: actions/checkout@v3    
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-          cache: 'pip' # caching pip dependencies
-      - run: pip install -r requirements.txt
+      - name: Set up Python venv
+        run: |
+          PY=$(command -v python3.9 || echo /opt/homebrew/bin/python3.9)
+          HASH=$(shasum requirements.txt | cut -c1-12)
+          VENV="$HOME/.cache/lottery-bot-venv-$HASH"
+          if [ ! -x "$VENV/bin/python" ]; then
+            rm -rf "$VENV.tmp"
+            "$PY" -m venv "$VENV.tmp"
+            "$VENV.tmp/bin/pip" install -q -r requirements.txt
+            mv "$VENV.tmp" "$VENV"
+          fi
+          echo "$VENV/bin" >> "$GITHUB_PATH"
       
       - name: Run Scripts
         run: make buy # or use 'make buy_lotto' / 'make buy_win720' for granular purchase
