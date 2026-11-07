@@ -17,6 +17,10 @@ def post(url, headers=None, data=None):
         for i,l in enumerate(lines):
             if re.search(r"다음에|나중에|Late|Expry|expry|연장|sendHttpJson\(|action=|\.do[\"']", l) and "gnb" not in l and "law.go" not in l:
                 print(f"[diag] L{i}: {l.strip()[:220]}")
+        st = next((i for i,l in enumerate(lines) if "var ExpryPswdNotiM" in l), None)
+        if st is not None:
+            for i in range(st, min(st+80, len(lines))):
+                if lines[i].strip(): print(f"[diag] B{i}: {lines[i].rstrip()[:200]}")
         print("[diag] has logout link:", "securityLogout" in t, "| has loginForm:", 'id="loginForm"' in t)
     return r
 c.post = post
