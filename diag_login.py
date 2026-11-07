@@ -11,6 +11,12 @@ def post(url, headers=None, data=None):
         print("[diag] set-cookie names:", [k.name for k in r.cookies])
         for pat in [r"const\s+errorMessage\s*=\s*'([^']*)'", r"const\s+errorCode\s*=\s*'([^']*)'", r"<title>([^<]*)</title>"]:
             m = re.search(pat, t); print("[diag]", pat[:25], "=>", m.group(1) if m else None)
+        import hashlib
+        anon = open(os.environ.get("ANON_HTML","/dev/null")).read() if os.environ.get("ANON_HTML") else ""
+        lines = t.splitlines()
+        for i,l in enumerate(lines):
+            if re.search(r"다음에|나중에|Late|Expry|expry|연장|sendHttpJson\(|action=|\.do[\"']", l) and "gnb" not in l and "law.go" not in l:
+                print(f"[diag] L{i}: {l.strip()[:220]}")
         print("[diag] has logout link:", "securityLogout" in t, "| has loginForm:", 'id="loginForm"' in t)
     return r
 c.post = post
